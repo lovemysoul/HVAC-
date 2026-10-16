@@ -1,4 +1,8 @@
-streamlit
-pandas
+flask
+numpy
+scipy
 scikit-learn
 joblib
+# IMPORTANT: replace the line "scikit-learn" above with the SAME version you used in Colab,
+# for example:  scikit-learn==1.5.2
+# (find it by running: import sklearn; print(sklearn.__version__))

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HVAC Failure Predictor</title>
+  <style>
+    :root {
+      --bg: #0e1117; --card: #1a1f2b; --text: #fafafa; --muted: #9aa4b2;
+      --border: #2b3242; --accent: #3b9eff;
+      --low: #1f9d55; --medium: #d9a000; --high: #e5484d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 1.8rem; }
+    .sub { color: var(--muted); margin: 0 0 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 6px; }
+    input, select {
+      width: 100%; padding: 10px 12px; border-radius: 8px; font-size: 1rem;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    }
+    input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 18px; }
+    @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+    button {
+      width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; cursor: pointer;
+      background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+    #result { margin-top: 20px; display: none; }
+    .prob { font-size: 2.6rem; font-weight: 700; margin: 4px 0 10px; }
+    .bar { height: 10px; background: var(--bg); border-radius: 99px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+    .verdict { margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-weight: 600; }
+    .verdict.low { background: rgba(31,157,85,.15); color: #5fd38d; }
+    .verdict.medium { background: rgba(217,160,0,.15); color: #f0c040; }
+    .verdict.high { background: rgba(229,72,77,.15); color: #ff8085; }
+    .verdict.error { background: rgba(229,72,77,.15); color: #ff8085; }
+    .small { color: var(--muted); font-size: .8rem; margin-top: 10px; }
+    .note { margin-top: 18px; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>❄️ HVAC Failure Predictor</h1>
+    <p class="sub">Enter the sensor readings and the model will tell you if the unit looks like it's heading for trouble.</p>
+
+    <div class="card">
+      <label for="model">Model</label>
+      <select id="model">
+        <option value="rf">Random Forest</option>
+        <option value="lr">Logistic Regression</option>
+      </select>
+
+      <div class="grid">
+        {% for label, name, low, high, default in fields %}
+        <div>
+          <label for="{{ name }}">{{ label }}</label>
+          <input type="number" id="{{ name }}" name="{{ name }}"
+                 min="{{ low }}" max="{{ high }}" step="any" value="{{ default }}">
+        </div>
+        {% endfor %}
+      </div>
+
+      <button id="go">Predict</button>
+
+      <div id="result">
+        <div class="small">Failure probability</div>
+        <div class="prob" id="prob">0%</div>
+        <div class="bar"><div id="barfill"></div></div>
+        <div class="verdict" id="verdict"></div>
+        <div class="small" id="thr"></div>
+      </div>
+    </div>
+
+    <p class="note">
+      Random Forest threshold: {{ rf_threshold }} &middot; Logistic Regression threshold: {{ lr_threshold }}.<br>
+      Model precision is low (about 9% to 15%), so treat a warning as a reason to inspect, not proof of failure.
+    </p>
+  </div>
+
+  <script>
+    const names = {{ fields | map(attribute=1) | list | tojson }};
+    const btn = document.getElementById("go");
+    const result = document.getElementById("result");
+    const verdict = document.getElementById("verdict");
+
+    btn.addEventListener("click", async () => {
+      const payload = { model: document.getElementById("model").value };
+      names.forEach(n => payload[n] = document.getElementById(n).value);
+
+      btn.disabled = true;
+      try {
+        const res = await fetch("/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        result.style.display = "block";
+
+        if (!res.ok) {
+          document.getElementById("prob").textContent = "–";
+          document.getElementById("barfill").style.width = "0%";
+          verdict.className = "verdict error";
+          verdict.textContent = data.error || "Something went wrong.";
+          document.getElementById("thr").textContent = "";
+          return;
+        }
+
+        const pct = data.probability * 100;
+        document.getElementById("prob").textContent = pct.toFixed(1) + "%";
+        document.getElementById("barfill").style.width = Math.min(pct, 100) + "%";
+        verdict.className = "verdict " + data.level;
+        const icon = data.level === "high" ? "⚠️ " : data.level === "medium" ? "🟡 " : "✅ ";
+        verdict.textContent = icon + data.message;
+        document.getElementById("thr").textContent =
+          data.model + " · decision threshold: " + data.threshold;
+      } catch (e) {
+        result.style.display = "block";
+        verdict.className = "verdict error";
+        verdict.textContent = "Could not reach the server.";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
